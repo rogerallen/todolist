@@ -1,9 +1,11 @@
+Cherrypy port of Google App Engine + backbone.js Todo List tutorial.
 
+Usage:
 
-Documentation:
+1) python main.py
+2) point your browser at http://localhost:8888
+
+Original Documentation:
 
 https://github.com/ccarpenterg/todolist/wiki
 
-Working demo:
-
-http://todolist-app.appspot.com/

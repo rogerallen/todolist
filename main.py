@@ -1,102 +1,143 @@
-
-from google.appengine.ext.webapp import template
-from google.appengine.ext import webapp
-from google.appengine.ext import db
-from google.appengine.ext.webapp.util import run_wsgi_app
-
-from django.utils import simplejson
-
+import cherrypy
+from jinja2 import Environment, FileSystemLoader
+import json
 from datetime import datetime
-import os, Cookie
+import os
+import Cookie
 
-class TodoList(db.Model):
-    timestamp = db.DateTimeProperty(auto_now_add=True)
+env = Environment(loader=FileSystemLoader('.'))
 
-class Todos(db.Model):
-    todolist = db.ReferenceProperty(TodoList)
-    order = db.IntegerProperty()
-    content = db.StringProperty()
-    done = db.BooleanProperty()
+# from stackoverflow
+class IDSingleton(object):
+    _instance = None
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            cls._instance = super(IDSingleton, cls).__new__(
+                                cls, *args, **kwargs)
+        return cls._instance
+    def __init__(self):
+        self.id = 1000
+    def getId(self):
+        rid = self.id
+        self.id += 1
+        return str(rid)
+ID = IDSingleton()
+
+# FIXME add persistence 
+g_todolist = []
+class TodoList(object):
+    def __init__(self):
+        self.timestamp = datetime.now()
+        self.key = ID.getId()
+
+# FIXME add persistence 
+g_todos = []
+class Todos(object):
+    def __init__(self,key,order,content,done):
+        self.id       = ID.getId()
+        self.key      = key
+        self.order    = order
+        self.content  = content
+        self.done     = done
 
     def toDict(self):
-	todo = {
-	    'id': self.key().id(), 
-	    'order': self.order,
-	    'content': self.content,
-	    'done': self.done
-	    }
-	return todo
+        todo = {
+            'id'      : self.id, 
+            'order'   : self.order,
+            'content' : self.content,
+            'done'    : self.done
+            }
+        return todo
 
-class MainHandler(webapp.RequestHandler):
-    def get(self):
-	if self.request.cookies.get('todos', None) == None:
-	    todolist = TodoList()
-	    todolist.put()
-	    cookie = Cookie.SimpleCookie()
-	    cookie['todos'] = todolist.key().__str__()
-	    cookie['todos']['expires'] = datetime(2014, 1, 1).strftime('%a, %d %b %Y %H:%M:%S')
-	    cookie['todos']['path'] = '/'
-	    self.response.headers.add_header('Set-Cookie', cookie['todos'].OutputString())
-	path = os.path.join(os.path.dirname(__file__), 'index.html')
-	self.response.out.write(template.render(path, None))
+class MainHandler(object):
+    exposed = True
+    def GET(self):
+        if cherrypy.request.cookie.get('todos', None) == None:
+            g_todolist.append(TodoList())
+            cookie = cherrypy.response.cookie
+            cookie['todos'] = g_todolist[-1].key
+            cookie['todos']['expires'] = datetime(2014, 1, 1).strftime('%a, %d %b %Y %H:%M:%S')
+            cookie['todos']['path'] = '/'
+        path = os.path.join(os.path.dirname(__file__), 'index.html')
+        tmpl = env.get_template('index.html')
+        return tmpl.render(salutation='Hello', target='World')
 
-class RESTfulHandler(webapp.RequestHandler):
-    def get(self, id):
-	key = self.request.cookies['todos']
-	todolist = db.get(key)
-	todos = []
-	query = Todos.all()
-	query.filter("todolist =", todolist.key())
-	for todo in query:
-	    todos.append(todo.toDict())
-	todos = simplejson.dumps(todos)
-	self.response.out.write(todos)
+class RESTfulHandler(object):
+    exposed = True
+    def GET(self):
+        key = cherrypy.request.cookie['todos']
+        todos = []
+        for todo in g_todos:
+            if todo.key == key:
+                todos.append(todo.toDict())
+        todos = json.dumps(todos)
+        return todos
 
-    def post(self, id):
-	key = self.request.cookies['todos']
-	todolist = db.get(key)
-	todo = simplejson.loads(self.request.body)
-	todo = Todos(todolist = todolist.key(),
-		     order   = todo['order'],
-		     content = todo['content'],
-		     done    = todo['done'])
-	todo.put()
-	todo = simplejson.dumps(todo.toDict())
-	self.response.out.write(todo)
+    def POST(self):
+        key = cherrypy.request.cookie['todos']
+        todo = json.loads(cherrypy.request.body.read())
+        todo = Todos(key     = key,
+                     order   = todo['order'],
+                     content = todo['content'],
+                     done    = todo['done'])
+        g_todos.append(todo)
+        todo = json.dumps(todo.toDict())
+        return todo
 
-    def put(self, id):
-	key = self.request.cookies['todos']
-	todolist = db.get(key)
-	todo = Todos.get_by_id(int(id))
-	if todo.todolist.key() == todolist.key():
-	    tmp = simplejson.loads(self.request.body)
-	    todo.content = tmp['content']
-	    todo.done    = tmp['done']
-	    todo.put()
-	    todo = simplejson.dumps(todo.toDict())
-	    self.response.out.write(todo)
-	else:
-	    self.error(403)
+    def PUT(self, uid):
+        key = cherrypy.request.cookie['todos']
+        todo = None
+        global g_todos
+        for t in g_todos:
+            if t.id == uid:
+                todo = t
+                break
+        if todo and todo.key == key:
+            tmp = json.loads(cherrypy.request.body.read())
+            todo.content = tmp['content']
+            todo.done    = tmp['done']
+            todo = json.dumps(todo.toDict())
+            return todo
+        else:
+            raise cherrypy.HTTPError(403)
 
-    def delete(self, id):
-	key = self.request.cookies['todos']
-        todolist = db.get(key)
-	todo = Todos.get_by_id(int(id))
-	if todo.todolist.key() == todolist.key():
-	    tmp = todo.toDict()
-	    todo.delete()
-	else:
-	    self.error(403)
-	
-application = webapp.WSGIApplication(
-				     [('/', MainHandler),
-				      ('/todos\/?([0-9]*)', RESTfulHandler)],
-				      debug=True)
+    def DELETE(self, uid):
+        key = cherrypy.request.cookie['todos']
+        todo = None
+        global g_todos
+        for (i,t) in enumerate(g_todos):
+            if t.id == uid:
+                todo = t
+                break
+        if todo and todo.key == key:
+            g_todos = g_todos[:i] + g_todos[i+1:]
+        else:
+            raise cherrypy.HTTPError(403)
+        
+root = MainHandler()
+root.todos = RESTfulHandler()
 
-def main():
-    run_wsgi_app(application)
+conf = {
+    'global': {
+        'server.socket_host': '127.0.0.1',
+        'server.socket_port': 8888,
+        'tools.staticdir.root': os.path.abspath(os.path.dirname(__file__))
+        },
+    '/': {
+        'request.dispatch': cherrypy.dispatch.MethodDispatcher(),
+        },
+    '/css': {
+        'tools.staticdir.on': True,
+        'tools.staticdir.dir': 'css'
+        },
+    '/js': {
+        'tools.staticdir.on': True,
+        'tools.staticdir.dir': 'js'
+        },
+    '/img': {
+        'tools.staticdir.on': True,
+        'tools.staticdir.dir': 'img'
+        },
+}
 
-if __name__ == "__main__":
-    main()
-
-
+cherrypy.quickstart(root, '/', conf)
