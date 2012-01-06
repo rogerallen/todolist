@@ -65,7 +65,7 @@ class MainHandler(object):
 class RESTfulHandler(object):
     exposed = True
     def GET(self):
-        key = cherrypy.request.cookie['todos']
+        key = cherrypy.request.cookie['todos'].value
         todos = []
         for todo in g_todos:
             if todo.key == key:
@@ -74,7 +74,7 @@ class RESTfulHandler(object):
         return todos
 
     def POST(self):
-        key = cherrypy.request.cookie['todos']
+        key = cherrypy.request.cookie['todos'].value
         todo = json.loads(cherrypy.request.body.read())
         todo = Todos(key     = key,
                      order   = todo['order'],
@@ -85,7 +85,7 @@ class RESTfulHandler(object):
         return todo
 
     def PUT(self, uid):
-        key = cherrypy.request.cookie['todos']
+        key = cherrypy.request.cookie['todos'].value
         todo = None
         global g_todos
         for t in g_todos:
@@ -102,7 +102,7 @@ class RESTfulHandler(object):
             raise cherrypy.HTTPError(403)
 
     def DELETE(self, uid):
-        key = cherrypy.request.cookie['todos']
+        key = cherrypy.request.cookie['todos'].value
         todo = None
         global g_todos
         for (i,t) in enumerate(g_todos):
